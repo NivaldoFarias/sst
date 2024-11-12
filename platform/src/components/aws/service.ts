@@ -44,6 +44,7 @@ import { Vpc as VpcV1 } from "./vpc-v1";
 import { DevCommand } from "../experimental/dev-command.js";
 import { Efs } from "./efs.js";
 import { toSeconds } from "../duration.js";
+import { imageBuilder } from "./helpers/container-builder.js";
 
 export interface ServiceArgs extends ClusterServiceArgs {
   /**
@@ -246,10 +247,15 @@ export class Service extends Component implements Link.Linkable {
     function normalizeContainers() {
       if (
         args.containers &&
-        (args.image || args.logging || args.environment || args.volumes)
+        (args.image ||
+          args.logging ||
+          args.environment ||
+          args.volumes ||
+          args.health ||
+          args.ssm)
       ) {
         throw new VisibleError(
-          `You cannot provide both "containers" and "image", "logging", "environment" or "volumes".`,
+          `You cannot provide both "containers" and "image", "logging", "environment", "volumes", "health" or "ssm".`,
         );
       }
 
@@ -260,9 +266,11 @@ export class Service extends Component implements Link.Linkable {
           image: args.image,
           logging: args.logging,
           environment: args.environment,
+          ssm: args.ssm,
           volumes: args.volumes,
           command: args.command,
           entrypoint: args.entrypoint,
+          health: args.health,
           dev: args.dev,
         },
       ];
@@ -654,6 +662,25 @@ export class Service extends Component implements Link.Linkable {
             managedPolicyArns: [
               "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy",
             ],
+            inlinePolicies: [
+              {
+                name: "inline",
+                policy: iam.getPolicyDocumentOutput({
+                  statements: [
+                    {
+                      sid: "ReadSsmAndSecrets",
+                      actions: [
+                        "ssm:GetParameters",
+                        "ssm:GetParameter",
+                        "ssm:GetParameterHistory",
+                        "secretsmanager:GetSecretValue",
+                      ],
+                      resources: ["*"],
+                    },
+                  ],
+                }).json,
+              },
+            ],
           },
           { parent: self },
         ),
@@ -701,7 +728,7 @@ export class Service extends Component implements Link.Linkable {
             }
 
             // Build image
-            const image = new Image(
+            const image = imageBuilder(
               ...transform(
                 args.transform?.image,
                 `${name}Image${container.name}`,
@@ -740,6 +767,13 @@ export class Service extends Component implements Link.Linkable {
           })(),
           command: container.command,
           entrypoint: container.entrypoint,
+          healthCheck: container.health && {
+            command: container.health.command,
+            startPeriod: toSeconds(container.health.startPeriod ?? "0 seconds"),
+            timeout: toSeconds(container.health.timeout ?? "5 seconds"),
+            interval: toSeconds(container.health.interval ?? "30 seconds"),
+            retries: container.health.retries ?? 3,
+          },
           pseudoTerminal: true,
           portMappings: [{ containerPortRange: "1-65535" }],
           logConfiguration: {
@@ -773,6 +807,9 @@ export class Service extends Component implements Link.Linkable {
             sourceVolume: volume.efs.accessPoint,
             containerPath: volume.path,
           })),
+          secrets: Object.entries(container.ssm ?? {}).map(
+            ([name, valueFrom]) => ({ name, valueFrom }),
+          ),
         })),
       );
 

@@ -66,9 +66,12 @@ type Runtime struct {
 
 func New(version string) *Runtime {
 	weight := int64(4)
-	if flag.SST_BUILD_CONCURRENCY != "" {
+	if flag.SST_BUILD_CONCURRENCY_FUNCTION != "" {
+		weight, _ = strconv.ParseInt(flag.SST_BUILD_CONCURRENCY_FUNCTION, 10, 64)
+	} else if flag.SST_BUILD_CONCURRENCY != "" {
 		weight, _ = strconv.ParseInt(flag.SST_BUILD_CONCURRENCY, 10, 64)
 	}
+
 	return &Runtime{
 		contexts:    sync.Map{},
 		results:     sync.Map{},
@@ -116,7 +119,7 @@ type NodeProperties struct {
 	ESBuild      esbuild.BuildOptions `json:"esbuild"`
 	Minify       bool                 `json:"minify"`
 	Format       string               `json:"format"`
-	SourceMap    bool                 `json:"sourceMap"`
+	SourceMap    *bool                `json:"sourceMap"`
 	Splitting    bool                 `json:"splitting"`
 	Plugins      string               `json:"plugins"`
 	Architecture string               `json:"architecture"`
